@@ -606,6 +606,72 @@ func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_QualifiesNamespace
 	}
 }
 
+func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_QualifiesNamespaceCustomToolCallHistory(t *testing.T) {
+	tests := []struct {
+		name             string
+		raw              []byte
+		wantHistoryName  string
+		wantDeclaredName string
+	}{
+		{
+			name: "namespaced custom tool",
+			raw: []byte(`{
+				"input": [
+					{
+						"type":"additional_tools",
+						"tools":[{
+							"type":"namespace",
+							"name":"functions",
+							"tools":[{"type":"custom","name":"exec","description":"Run JavaScript"}]
+						}]
+					},
+					{"type":"custom_tool_call","call_id":"call_exec","name":"exec","namespace":"functions","input":"text('ok')"},
+					{"type":"custom_tool_call_output","call_id":"call_exec","output":"ok"}
+				]
+			}`),
+			wantHistoryName:  "functions__exec",
+			wantDeclaredName: "functions__exec",
+		},
+		{
+			name: "direct custom tool",
+			raw: []byte(`{
+				"input": [
+					{"type":"custom_tool_call","call_id":"call_exec","name":"exec","input":"text('ok')"},
+					{"type":"custom_tool_call_output","call_id":"call_exec","output":"ok"}
+				],
+				"tools":[{"type":"custom","name":"exec","description":"Run JavaScript"}]
+			}`),
+			wantHistoryName:  "exec",
+			wantDeclaredName: "exec",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("k3", tt.raw, false)
+
+			gotHistoryName := gjson.GetBytes(out, "messages.0.tool_calls.0.function.name").String()
+			gotDeclaredName := gjson.GetBytes(out, "tools.0.function.name").String()
+			if gotHistoryName != tt.wantHistoryName {
+				t.Fatalf("history custom tool name = %q, want %q; output=%s", gotHistoryName, tt.wantHistoryName, out)
+			}
+			if gotDeclaredName != tt.wantDeclaredName {
+				t.Fatalf("declared custom tool name = %q, want %q; output=%s", gotDeclaredName, tt.wantDeclaredName, out)
+			}
+			if gotHistoryName != gotDeclaredName {
+				t.Fatalf("history custom tool name = %q, declared custom tool name = %q; output=%s", gotHistoryName, gotDeclaredName, out)
+			}
+			arguments := gjson.GetBytes(out, "messages.0.tool_calls.0.function.arguments").String()
+			if got := gjson.Get(arguments, "input").String(); got != "text('ok')" {
+				t.Fatalf("custom tool input = %q, want %q; output=%s", got, "text('ok')", out)
+			}
+			if got := gjson.GetBytes(out, "messages.1.content").String(); got != "ok" {
+				t.Fatalf("custom tool output = %q, want ok; output=%s", got, out)
+			}
+		})
+	}
+}
+
 func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_FlattensNamespaceCustomTools(t *testing.T) {
 	tests := []struct {
 		name string
